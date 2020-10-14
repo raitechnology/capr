@@ -1,0 +1,13 @@
+Source: capr
+Section: devel
+Priority: optional
+Maintainer: Chris Anderson <chris@raitechnology.com>
+Build-Depends: debhelper (>= 9), raikv, libpcre2-dev, libdecnumber
+Standards-Version: 3.9.5
+Homepage: https://www.github.com/raitechnology/capr
+
+Package: capr
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Rai Cache protocol
+ Cache protocol
