@@ -180,7 +180,7 @@ all_libs    += $(libd)/libcapr.a
 all_dlls    += $(libd)/libcapr.so
 all_depends += $(libcapr_deps)
 
-capr_server_defines := -DCAPR_VER=$(ver_build)
+server_defines := -DCAPR_VER=$(ver_build)
 capr_server_files := server
 capr_server_objs  := $(addprefix $(objd)/, $(addsuffix .o, $(capr_server_files)))
 capr_server_deps  := $(addprefix $(dependd)/, $(addsuffix .d, $(capr_server_files)))
