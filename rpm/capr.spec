@@ -13,9 +13,11 @@ Prefix:	        /usr
 BuildRequires:  gcc-c++
 BuildRequires:  chrpath
 BuildRequires:  raikv
+BuildRequires:  raimd
 BuildRequires:  libdecnumber
 BuildRequires:  pcre2-devel
 Requires:       raikv
+Requires:       raimd
 Requires:       libdecnumber
 Requires:       pcre2
 Requires(post): /sbin/ldconfig
