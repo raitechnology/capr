@@ -187,7 +187,7 @@ capr_server_deps  := $(addprefix $(dependd)/, $(addsuffix .d, $(capr_server_file
 capr_server_libs  := $(capr_lib)
 capr_server_lnk   := $(capr_lib) $(lnk_lib) -lpcre2-8
 
-$(bind)/capr_server: $(server_objs) $(server_libs) $(lnk_dep)
+$(bind)/capr_server: $(capr_server_objs) $(server_libs) $(lnk_dep)
 
 all_exes    += $(bind)/capr_server
 all_depends += $(capr_server_deps)
