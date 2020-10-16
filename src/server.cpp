@@ -18,8 +18,8 @@ struct Args : public MainLoopVars { /* argv[] parsed args */
 };
 
 struct Loop : public MainLoop<Args> {
-  Loop( EvShm &m,  Args &args,  int num ) :
-    MainLoop<Args>( m, args, num ) {}
+  Loop( EvShm &m,  Args &args,  int num,  bool (*ini)( void * ) ) :
+    MainLoop<Args>( m, args, num, ini ) {}
 
   EvCaprListen * capr_sv;
   bool capr_init( void ) {
@@ -33,14 +33,10 @@ struct Loop : public MainLoop<Args> {
       fflush( stdout );
     return cnt > 0;
   }
+  static bool initialize( void *me ) noexcept {
+    return ((Loop *) me)->init();
+  }
 };
-
-template<>
-bool
-MainLoop<Args>::initialize( void ) noexcept
-{
-  return ((Loop *) this)->init();
-}
 
 int
 main( int argc, const char *argv[] )
@@ -56,7 +52,7 @@ main( int argc, const char *argv[] )
   printf( "capr_version:         " kv_stringify( CAPR_VER ) "\n" );
   shm.print();
   r.capr_port = r.parse_port( argc, argv, "-c", "8866" );
-  Runner<Args, Loop> runner( r, shm );
+  Runner<Args, Loop> runner( r, shm, Loop::initialize );
   if ( r.thr_error == 0 )
     return 0;
   return 1;
