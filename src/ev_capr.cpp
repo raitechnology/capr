@@ -101,7 +101,7 @@ using namespace md;
 static uint64_t uptime_stamp;
 
 EvCaprListen::EvCaprListen( EvPoll &p ) noexcept
-  : EvTcpListen( p, EvCaprService::EV_CAPR_SOCK, "capr_sock" )
+  : EvTcpListen( p, "capr_listen", "capr_sock" )
 {
   if ( uptime_stamp == 0 )
     uptime_stamp = kv_current_realtime_ns();
@@ -123,8 +123,7 @@ EvCaprListen::accept( void ) noexcept
     return false;
   }
   EvCaprService *c = 
-    this->poll.get_free_list<EvCaprService>(
-      this->poll.free_list[ EvCaprService::EV_CAPR_SOCK ] );
+    this->poll.get_free_list<EvCaprService>( this->accept_sock_type );
   if ( c == NULL ) {
     perror( "accept: no memory" );
     ::close( sock );
@@ -148,7 +147,7 @@ EvCaprListen::accept( void ) noexcept
   if ( this->poll.add_sock( c ) < 0 ) {
     fprintf( stderr, "failed to add sock %d\n", sock );
     ::close( sock );
-    c->push_free_list();
+    this->poll.push_free_list( c );
     return false;
   }
   c->pub_session( CAPR_SESSION_START );
@@ -583,27 +582,7 @@ EvCaprService::release( void ) noexcept
   this->sub_tab.release();
   this->pat_tab.release();
   this->EvConnection::release_buffers();
-  this->push_free_list();
-}
-
-void
-EvCaprService::push_free_list( void ) noexcept
-{
-  if ( this->in_list( IN_ACTIVE_LIST ) )
-    fprintf( stderr, "capr sock should not be in active list\n" );
-  else if ( ! this->in_list( IN_FREE_LIST ) ) {
-    this->set_list( IN_FREE_LIST );
-    this->poll.free_list[ EV_CAPR_SOCK ].push_hd( this );
-  }
-}
-
-void
-EvCaprService::pop_free_list( void ) noexcept
-{
-  if ( this->in_list( IN_FREE_LIST ) ) {
-    this->set_list( IN_NO_LIST );
-    this->poll.free_list[ EV_CAPR_SOCK ].pop( this );
-  }
+  this->poll.push_free_list( this );
 }
 
 void

@@ -16,7 +16,6 @@ struct CaprSession;
 
 struct EvCaprListen : public kv::EvTcpListen {
   CaprSession * sess;
-  uint64_t      timer_id;
   void * operator new( size_t, void *ptr ) { return ptr; }
   EvCaprListen( kv::EvPoll &p ) noexcept;
   virtual bool accept( void ) noexcept;
@@ -170,7 +169,6 @@ struct CaprPatternMap {
 };
 
 struct EvCaprService : public kv::EvConnection {
-  static const uint8_t EV_CAPR_SOCK = 7;
   void * operator new( size_t, void *ptr ) { return ptr; }
 
   CaprSubMap     sub_tab;
@@ -183,7 +181,7 @@ struct EvCaprService : public kv::EvConnection {
   uint32_t       inboxlen;
   uint64_t       sid;
 
-  EvCaprService( kv::EvPoll &p ) : kv::EvConnection( p, EV_CAPR_SOCK ) {}
+  EvCaprService( kv::EvPoll &p,  const uint8_t t ) : kv::EvConnection( p, t ) {}
   void initialize_state( uint64_t id ) {
     this->sess = NULL;
     this->ms = this->bs = 0;
@@ -205,8 +203,6 @@ struct EvCaprService : public kv::EvConnection {
   bool fwd_inbox( kv::EvPublish &pub ) noexcept;
   void get_inbox_addr( kv::EvPublish &pub,  const char *&subj,
                        uint8_t *addr ) noexcept;
-  void push_free_list( void ) noexcept;
-  void pop_free_list( void ) noexcept;
   void pub_session( uint8_t code ) noexcept;
   /* EvSocket */
   virtual void process( void ) noexcept final;
