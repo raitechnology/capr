@@ -321,15 +321,14 @@ EvCaprService::add_subscription( const char *sub,  uint32_t len,
     uint32_t h = kv_crc_c( sub, len, 0 ),
              rcnt;
     if ( this->sub_tab.put( h, sub, len ) == CAPR_SUB_OK ) {
-      rcnt = this->poll.sub_route.add_route( h, this->fd );
+      rcnt = this->poll.sub_route.add_sub_route( h, this->fd );
       this->poll.notify_sub( h, sub, len, this->fd, rcnt, 'C',
                              reply, replylen );
     }
   }
   else {
     CaprPatternRoute * rt;
-    char       buf[ 1024 ];
-    PatternCvt cvt( buf, sizeof( buf ) );
+    PatternCvt cvt;
     uint32_t   h, rcnt;
 
     if ( cvt.convert_rv( sub, len ) == 0 ) {
@@ -339,7 +338,7 @@ EvCaprService::add_subscription( const char *sub,  uint32_t len,
         size_t erroff;
         int    error;
         rt->re =
-          pcre2_compile( (uint8_t *) buf, cvt.off, 0, &error, &erroff, 0 );
+          pcre2_compile( (uint8_t *) cvt.out, cvt.off, 0, &error, &erroff, 0 );
         if ( rt->re == NULL ) {
           fprintf( stderr, "re failed\n" );
         }
@@ -356,7 +355,7 @@ EvCaprService::add_subscription( const char *sub,  uint32_t len,
         else {
           rcnt = this->poll.sub_route.add_pattern_route( h, this->fd,
                                                          cvt.prefixlen );
-          this->poll.notify_psub( h, buf, cvt.off, sub, cvt.prefixlen,
+          this->poll.notify_psub( h, cvt.out, cvt.off, sub, cvt.prefixlen,
                                   this->fd, rcnt, 'C' );
         }
       }
@@ -376,13 +375,12 @@ EvCaprService::rem_sub( CaprMsgIn &rec ) noexcept
              rcnt = 0;
     if ( this->sub_tab.rem( h, sub, len ) == CAPR_SUB_OK ) {
       if ( this->sub_tab.tab.find_by_hash( h ) == NULL )
-        rcnt = this->poll.sub_route.del_route( h, this->fd );
+        rcnt = this->poll.sub_route.del_sub_route( h, this->fd );
       this->poll.notify_unsub( h, sub, len, this->fd, rcnt, 'C' );
     }
   }
   else {
-    char               buf[ 1024 ];
-    PatternCvt         cvt( buf, sizeof( buf ) );
+    PatternCvt         cvt;
     RouteLoc           loc;
     CaprPatternRoute * rt;
     uint32_t           h, rcnt;
@@ -402,7 +400,7 @@ EvCaprService::rem_sub( CaprMsgIn &rec ) noexcept
         this->pat_tab.tab.remove( loc );
         rcnt = this->poll.sub_route.del_pattern_route( h, this->fd,
                                                        cvt.prefixlen );
-        this->poll.notify_punsub( h, buf, cvt.off, sub, cvt.prefixlen,
+        this->poll.notify_punsub( h, cvt.out, cvt.off, sub, cvt.prefixlen,
                                   this->fd, rcnt, 'C' );
       }
     }
@@ -418,19 +416,18 @@ EvCaprService::rem_all_sub( void ) noexcept
 
   if ( this->sub_tab.first( pos ) ) {
     do {
-      rcnt = this->poll.sub_route.del_route( pos.rt->hash, this->fd );
+      rcnt = this->poll.sub_route.del_sub_route( pos.rt->hash, this->fd );
       this->poll.notify_unsub( pos.rt->hash, pos.rt->value, pos.rt->len,
                                this->fd, rcnt, 'C' );
     } while ( this->sub_tab.next( pos ) );
   }
   if ( this->pat_tab.first( ppos ) ) {
-    char       buf[ 1024 ];
-    PatternCvt cvt( buf, sizeof( buf ) );
+    PatternCvt cvt;
     do {
       if ( cvt.convert_rv( ppos.rt->value, ppos.rt->len ) == 0 ) {
         rcnt = this->poll.sub_route.del_pattern_route( ppos.rt->hash,
                                                       this->fd, cvt.prefixlen );
-        this->poll.notify_punsub( ppos.rt->hash, buf, cvt.off,
+        this->poll.notify_punsub( ppos.rt->hash, cvt.out, cvt.off,
                                   ppos.rt->value, cvt.prefixlen,
                                   this->fd, rcnt, 'C' );
       }
