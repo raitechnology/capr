@@ -170,7 +170,7 @@ libcapr_dbjs  := $(addprefix $(objd)/, $(addsuffix .fpic.o, $(libcapr_files)))
 libcapr_deps  := $(addprefix $(dependd)/, $(addsuffix .d, $(libcapr_files))) \
                   $(addprefix $(dependd)/, $(addsuffix .fpic.d, $(libcapr_files)))
 libcapr_dlnk  := $(dlnk_lib)
-libcapr_spec  := $(version)-$(build_num)
+libcapr_spec  := $(version)-$(build_num)_$(git_hash)
 libcapr_ver   := $(major_num).$(minor_num)
 
 $(libd)/libcapr.a: $(libcapr_objs)
