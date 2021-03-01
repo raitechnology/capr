@@ -15,6 +15,7 @@ BuildRequires:  raikv
 BuildRequires:  raimd
 BuildRequires:  libdecnumber
 BuildRequires:  pcre2-devel
+BuildRequires:  git-core
 Requires:       raikv
 Requires:       raimd
 Requires:       libdecnumber
