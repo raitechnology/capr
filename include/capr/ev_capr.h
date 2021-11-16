@@ -33,12 +33,6 @@ struct CaprSubRoute {
   uint32_t msg_cnt;
   uint16_t len;
   char     value[ 2 ];
-  bool equals( const void *s,  uint16_t l ) const {
-    return l == this->len && ::memcmp( s, this->value, l ) == 0;
-  }
-  void copy( const void *s,  uint16_t l ) {
-    ::memcpy( this->value, s, l );
-  }
 };
 
 enum CaprSubStatus {
@@ -113,13 +107,6 @@ struct CaprPatternRoute {
   pcre2_real_match_data_8 * md;
   uint16_t                  len;
   char                      value[ 2 ];
-
-  bool equals( const void *s,  uint16_t l ) const {
-    return l == this->len && ::memcmp( s, this->value, l ) == 0;
-  }
-  void copy( const void *s,  uint16_t l ) {
-    ::memcpy( this->value, s, l );
-  }
 };
 
 struct CaprPatternRoutePos {
@@ -171,6 +158,7 @@ struct CaprPatternMap {
 struct EvCaprService : public kv::EvConnection {
   void * operator new( size_t, void *ptr ) { return ptr; }
 
+  kv::RoutePublish & sub_route;
   CaprSubMap     sub_tab;
   CaprPatternMap pat_tab;
   CaprSession  * sess;
@@ -181,7 +169,8 @@ struct EvCaprService : public kv::EvConnection {
   uint32_t       inboxlen;
   uint64_t       sid;
 
-  EvCaprService( kv::EvPoll &p,  const uint8_t t ) : kv::EvConnection( p, t ) {}
+  EvCaprService( kv::EvPoll &p,  const uint8_t t )
+    : kv::EvConnection( p, t ), sub_route( p.sub_route ) {}
   void initialize_state( uint64_t id ) {
     this->sess = NULL;
     this->ms = this->bs = 0;

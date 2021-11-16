@@ -44,6 +44,11 @@ main( int argc, const char *argv[] )
   EvShm shm;
   Args  r;
 
+  r.no_threads   = true;
+  r.no_reuseport = true;
+  r.no_map       = true;
+  r.no_default   = true;
+  r.all          = true;
   r.add_desc( "  -c capr  = listen capr port      (8866)\n" );
   if ( ! r.parse_args( argc, argv ) )
     return 1;
