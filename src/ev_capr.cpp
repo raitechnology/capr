@@ -231,6 +231,51 @@ EvCaprService::timer_expire( uint64_t tid,  uint64_t ) noexcept
   return true;
 }
 
+uint8_t
+EvCaprService::is_subscribed( const NotifySub &sub ) noexcept
+{
+  uint8_t v    = 0;
+  bool    coll = false;
+  if ( this->sub_tab.find( sub.subj_hash, sub.subject, sub.subject_len,
+                           coll ) == CAPR_SUB_OK )
+    v |= EV_SUBSCRIBED;
+  else
+    v |= EV_NOT_SUBSCRIBED;
+  if ( coll )
+    v |= EV_COLLISION;
+  return v;
+}
+
+uint8_t
+EvCaprService::is_psubscribed( const NotifyPattern &pat ) noexcept
+{
+  uint8_t v    = 0;
+  bool    coll = false;
+  const PatternCvt & cvt = pat.cvt;
+  CaprPatternRoute * rt;
+  if ( this->pat_tab.find( pat.prefix_hash, pat.pattern, cvt.prefixlen,
+                           rt, coll ) == CAPR_SUB_OK ) {
+    CaprWildMatch *m;
+    for ( m = rt->list.hd; m != NULL; m = m->next ) {
+      if ( m->len == pat.pattern_len &&
+           ::memcmp( pat.pattern, m->value, m->len ) == 0 ) {
+        v |= EV_SUBSCRIBED;
+        break;
+      }
+    }
+    if ( m == NULL )
+      v |= EV_NOT_SUBSCRIBED | EV_COLLISION;
+    else if ( rt->count > 1 )
+      v |= EV_COLLISION;
+  }
+  else {
+    v |= EV_NOT_SUBSCRIBED;
+  }
+  if ( coll )
+    v |= EV_COLLISION;
+  return v;
+}
+
 void
 EvCaprService::reassert_subs( CaprMsgIn &rec ) noexcept
 {
@@ -258,14 +303,20 @@ EvCaprService::reassert_subs( CaprMsgIn &rec ) noexcept
                 while ( len > 0 && sub[ len - 1 ] == '\0' )
                   len--;
                 if ( len > 0 ) {
-                  if ( sub[ len - 1 ] == '*' && sub[ len - 1 ] == '>' ) {
+                  if ( sub[ len - 1 ] == '*' || sub[ len - 1 ] == '>' ) {
                     if ( len == 1 )
                       is_wild = true;
                     else if ( sub[ len - 2 ] == '.' )
                       is_wild = true;
                   }
-                  if ( ! is_wild )
-                    is_wild = ::memmem( sub, len, ".*.", 3 ) != NULL;
+                  if ( ! is_wild ) {
+                    const char * p = (const char *)
+                                     ::memmem( sub, len, "*.", 2 );
+                    if ( p != NULL ) {
+                      if ( p == sub || p[ -1 ] == '.' )
+                        is_wild = true;
+                    }
+                  }
                   this->add_subscription( sub, len, NULL, 0, is_wild );
                 }
               }
@@ -318,46 +369,71 @@ EvCaprService::add_subscription( const char *sub,  uint32_t len,
                                  const char *reply,  uint32_t replylen,
                                  bool is_wild ) noexcept
 {
+    uint32_t h;
+    bool     coll = false;
+
   if ( ! is_wild ) {
-    uint32_t h = kv_crc_c( sub, len, 0 ),
-             rcnt;
-    if ( this->sub_tab.put( h, sub, len ) == CAPR_SUB_OK ) {
-      rcnt = this->sub_route.add_sub_route( h, this->fd );
-      this->sub_route.notify_sub( h, sub, len, this->fd, rcnt, 'C',
-                                  reply, replylen );
+    h    = kv_crc_c( sub, len, 0 );
+    if ( this->sub_tab.put( h, sub, len, coll ) == CAPR_SUB_OK ) {
+      NotifySub nsub( sub, len, reply, replylen, h, this->fd, coll, 'C' );
+      this->sub_route.add_sub( nsub );
     }
   }
   else {
     CaprPatternRoute * rt;
     PatternCvt cvt;
-    uint32_t   h, rcnt;
-
     if ( cvt.convert_rv( sub, len ) == 0 ) {
       h = kv_crc_c( sub, cvt.prefixlen,
                     this->sub_route.prefix_seed( cvt.prefixlen ) );
-      if ( this->pat_tab.put( h, sub, len, rt ) == CAPR_SUB_OK ) {
-        size_t erroff;
-        int    error;
-        rt->re =
-          pcre2_compile( (uint8_t *) cvt.out, cvt.off, 0, &error, &erroff, 0 );
-        if ( rt->re == NULL ) {
-          fprintf( stderr, "re failed\n" );
+      if ( this->pat_tab.put( h, sub, cvt.prefixlen, rt,
+                              coll ) != CAPR_SUB_NOT_FOUND ){
+        CaprWildMatch * m;
+        for ( m = rt->list.hd; m != NULL; m = m->next ) {
+          if ( m->len == len && ::memcmp( sub, m->value, len ) == 0 )
+            break;
         }
-        else {
-          rt->md = pcre2_match_data_create_from_pattern( rt->re, NULL );
-          if ( rt->md == NULL ) {
-            pcre2_code_free( rt->re );
-            rt->re = NULL;
-            fprintf( stderr, "md failed\n" );
+        if ( m == NULL ) {
+          pcre2_real_code_8       * re = NULL;
+          pcre2_real_match_data_8 * md = NULL;
+          size_t erroff;
+          int    error;
+          bool   pattern_success = false;
+          /* if prefix matches, no need for pcre2 */
+          if ( cvt.prefixlen + 1 == len && sub[ cvt.prefixlen ] == '>' )
+            pattern_success = true;
+          else {
+            re = pcre2_compile( (uint8_t *) cvt.out, cvt.off, 0, &error,
+                                &erroff, 0 );
+            if ( re == NULL ) {
+              fprintf( stderr, "re failed\n" );
+            }
+            else {
+              md = pcre2_match_data_create_from_pattern( re, NULL );
+              if ( md == NULL )
+                fprintf( stderr, "md failed\n" );
+              else
+                pattern_success = true;
+            }
           }
-        }
-        if ( rt->re == NULL )
-          this->pat_tab.tab.remove( h, sub, len );
-        else {
-          rcnt = this->sub_route.add_pattern_route( h, this->fd,
-                                                    cvt.prefixlen );
-          this->sub_route.notify_psub( h, cvt.out, cvt.off, sub, cvt.prefixlen,
-                                       this->fd, rcnt, 'C' );
+          if ( pattern_success &&
+               (m = CaprWildMatch::create( len, sub, re, md )) != NULL ) {
+            rt->list.push_hd( m );
+            if ( rt->count++ > 0 )
+              coll = true;
+            this->pat_tab.sub_count++;
+            NotifyPattern npat( cvt, sub, len, reply, replylen, h, this->fd,
+                                coll, 'C' );
+            this->sub_route.add_pat( npat );
+          }
+          else {
+            fprintf( stderr, "wildcard failed\n" );
+            if ( rt->count == 0 )
+              this->pat_tab.tab.remove( h, sub, len );
+            if ( md != NULL )
+              pcre2_match_data_free( md );
+            if ( re != NULL )
+              pcre2_code_free( re );
+          }
         }
       }
     }
@@ -370,39 +446,50 @@ EvCaprService::rem_sub( CaprMsgIn &rec ) noexcept
   char     sub[ CAPR_MAX_SUBJ_LEN ];
   bool     is_wild;
   uint32_t len = rec.get_subscription( sub, is_wild );
+  uint32_t h;
+  bool     coll = false;
 
   if ( ! is_wild ) {
-    uint32_t h    = kv_crc_c( sub, len, 0 ),
-             rcnt = 0;
-    if ( this->sub_tab.rem( h, sub, len ) == CAPR_SUB_OK ) {
-      if ( this->sub_tab.tab.find_by_hash( h ) == NULL )
-        rcnt = this->sub_route.del_sub_route( h, this->fd );
-      this->sub_route.notify_unsub( h, sub, len, this->fd, rcnt, 'C' );
+    h = kv_crc_c( sub, len, 0 );
+    if ( this->sub_tab.rem( h, sub, len, coll ) == CAPR_SUB_OK ) {
+      NotifySub nsub( sub, len, h, this->fd, coll, 'C' );
+      this->sub_route.del_sub( nsub );
     }
   }
   else {
     PatternCvt         cvt;
     RouteLoc           loc;
     CaprPatternRoute * rt;
-    uint32_t           h, rcnt;
+    uint32_t           h;
 
     if ( cvt.convert_rv( sub, len ) == 0 ) {
       h = kv_crc_c( sub, cvt.prefixlen,
                     this->sub_route.prefix_seed( cvt.prefixlen ) );
-      if ( (rt = this->pat_tab.tab.find( h, sub, len, loc )) != NULL ) {
-        if ( rt->md != NULL ) {
-          pcre2_match_data_free( rt->md );
-          rt->md = NULL;
+      if ( this->pat_tab.find( h, sub, cvt.prefixlen, loc, rt,
+                               coll ) == CAPR_SUB_OK ) {
+        for ( CaprWildMatch *m = rt->list.hd; m != NULL; m = m->next ) {
+          if ( m->len == len && ::memcmp( m->value, sub, len ) == 0 ) {
+            if ( m->md != NULL ) {
+              pcre2_match_data_free( m->md );
+              m->md = NULL;
+            }
+            if ( m->re != NULL ) {
+              pcre2_code_free( m->re );
+              m->re = NULL;
+            }
+            rt->list.pop( m );
+            if ( --rt->count > 0 )
+              coll = true;
+            delete m;
+            this->pat_tab.sub_count--;
+            if ( rt->count == 0 )
+              this->pat_tab.tab.remove( loc );
+
+            NotifyPattern npat( cvt, sub, len, h, this->fd, coll, 'C' );
+            this->sub_route.del_pat( npat );
+            break;
+          }
         }
-        if ( rt->re != NULL ) {
-          pcre2_code_free( rt->re );
-          rt->re = NULL;
-        }
-        this->pat_tab.tab.remove( loc );
-        rcnt = this->sub_route.del_pattern_route( h, this->fd,
-                                                       cvt.prefixlen );
-        this->sub_route.notify_punsub( h, cvt.out, cvt.off, sub, cvt.prefixlen,
-                                       this->fd, rcnt, 'C' );
       }
     }
   }
@@ -413,24 +500,25 @@ EvCaprService::rem_all_sub( void ) noexcept
 {
   CaprSubRoutePos     pos;
   CaprPatternRoutePos ppos;
-  uint32_t            rcnt;
 
   if ( this->sub_tab.first( pos ) ) {
     do {
-      rcnt = this->sub_route.del_sub_route( pos.rt->hash, this->fd );
-      this->sub_route.notify_unsub( pos.rt->hash, pos.rt->value, pos.rt->len,
-                                    this->fd, rcnt, 'C' );
+      bool coll = this->sub_tab.rem_collision( pos.rt );
+      NotifySub nsub( pos.rt->value, pos.rt->len, pos.rt->hash,
+                      this->fd, coll, 'C' );
+      this->sub_route.del_sub( nsub );
     } while ( this->sub_tab.next( pos ) );
   }
   if ( this->pat_tab.first( ppos ) ) {
-    PatternCvt cvt;
     do {
-      if ( cvt.convert_rv( ppos.rt->value, ppos.rt->len ) == 0 ) {
-        rcnt = this->sub_route.del_pattern_route( ppos.rt->hash,
-                                                  this->fd, cvt.prefixlen );
-        this->sub_route.notify_punsub( ppos.rt->hash, cvt.out, cvt.off,
-                                       ppos.rt->value, cvt.prefixlen,
-                                       this->fd, rcnt, 'C' );
+      for ( CaprWildMatch *m = ppos.rt->list.hd; m != NULL; m = m->next ) {
+        PatternCvt cvt;
+        if ( cvt.convert_rv( m->value, m->len ) == 0 ) {
+          bool coll = this->pat_tab.rem_collision( ppos.rt, m );
+          NotifyPattern npat( cvt, m->value, m->len, ppos.rt->hash,
+                              this->fd, coll, 'C' );
+          this->sub_route.del_pat( npat );
+        }
       }
     } while ( this->pat_tab.next( ppos ) );
   }
@@ -443,7 +531,7 @@ EvCaprService::fwd_pub( CaprMsgIn &rec ) noexcept
   uint32_t len = rec.get_subject( sub ),
            h   = kv_crc_c( sub, len, 0 );
   EvPublish pub( sub, len, NULL, 0, rec.msg_data, rec.msg_data_len,
-                 this->fd, h, NULL, 0, rec.msg_enc, rec.code );
+                 this->sub_route, this->fd, h, rec.msg_enc, rec.code );
   return this->sub_route.forward_msg( pub, NULL, 0, NULL );
 }
 
@@ -463,27 +551,27 @@ EvCaprService::on_msg( EvPublish &pub ) noexcept
     }
     else {
       CaprPatternRoute * rt = NULL;
-      RouteLoc           loc;
-      rt = this->pat_tab.tab.find_by_hash( pub.hash[ cnt ], loc );
-      for (;;) {
-        if ( rt == NULL )
-          break;
-        if ( pcre2_match( rt->re, (const uint8_t *) pub.subject,
-                          pub.subject_len, 0, 0, rt->md, 0 ) == 1 ) {
-          if ( pub.subject[ 0 ] == '_' &&
-               pub.subject_len > this->inboxlen &&
-               ::memcmp( pub.subject, this->inbox, this->inboxlen - 1 ) == 0 ) {
-            rt->msg_cnt++;
-            this->fwd_inbox( pub );
+      ret = this->pat_tab.find( pub.hash[ cnt ], pub.subject, pub.prefix[ cnt ],
+                                rt );
+      if ( ret == CAPR_SUB_OK ) {
+        for ( CaprWildMatch *m = rt->list.hd; m != NULL; m = m->next ) {
+          if ( m->re == NULL ||
+               pcre2_match( m->re, (const uint8_t *) pub.subject,
+                            pub.subject_len, 0, 0, m->md, 0 ) == 1 ) {
+            if ( pub.subject[ 0 ] == '_' &&
+                 pub.subject_len > this->inboxlen &&
+                 ::memcmp( pub.subject, this->inbox, this->inboxlen-1 ) == 0 ) {
+              m->msg_cnt++;
+              this->fwd_inbox( pub );
+            }
+            else {
+              m->msg_cnt++;
+              if ( pub_cnt == 0 )
+                this->fwd_msg( pub, NULL, 0 );
+            }
+            pub_cnt++;
           }
-          else {
-            rt->msg_cnt++;
-            if ( pub_cnt == 0 )
-              this->fwd_msg( pub, NULL, 0 );
-          }
-          pub_cnt++;
         }
-        rt = this->pat_tab.tab.find_next_by_hash( pub.hash[ cnt ], loc );
       }
     }
   }
@@ -558,13 +646,18 @@ CaprPatternMap::release( void ) noexcept
 
   if ( this->first( ppos ) ) {
     do {
-      if ( ppos.rt->md != NULL ) {
-        pcre2_match_data_free( ppos.rt->md );
-        ppos.rt->md = NULL;
-      }
-      if ( ppos.rt->re != NULL ) {
-        pcre2_code_free( ppos.rt->re );
-        ppos.rt->re = NULL;
+      CaprWildMatch *next;
+      for ( CaprWildMatch *m = ppos.rt->list.hd; m != NULL; m = next ) {
+        next = m->next;
+        if ( m->md != NULL ) {
+          pcre2_match_data_free( m->md );
+          m->md = NULL;
+        }
+        if ( m->re != NULL ) {
+          pcre2_code_free( m->re );
+          m->re = NULL;
+        }
+        delete m;
       }
     } while ( this->next( ppos ) );
   }
@@ -837,7 +930,7 @@ CaprMsgIn::get_inbox( char *buf ) noexcept
 uint32_t
 CaprMsgOut::encode_publish( CaprSession &sess,  const uint8_t *addr,
                             const char *subj,  uint8_t code,
-                            uint32_t msg_len,  uint8_t msg_enc ) noexcept
+                            uint32_t msg_len,  uint32_t msg_enc ) noexcept
 {
   uint32_t off;
 

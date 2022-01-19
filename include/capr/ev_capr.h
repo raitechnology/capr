@@ -19,7 +19,7 @@ struct EvCaprListen : public kv::EvTcpListen {
   void * operator new( size_t, void *ptr ) { return ptr; }
   EvCaprListen( kv::EvPoll &p ) noexcept;
   virtual bool accept( void ) noexcept;
-  int listen( const char *ip,  int port,  int opts ) {
+  virtual int listen( const char *ip,  int port,  int opts ) noexcept {
     return this->kv::EvTcpListen::listen( ip, port, opts, "capr_listen" );
   }
 };
@@ -62,11 +62,14 @@ struct CaprSubMap {
   }
   /* put in new sub
    * tab[ sub ] => {cnt} */
-  CaprSubStatus put( uint32_t h,  const char *sub,  size_t len ) {
-    kv::RouteLoc loc;
-    CaprSubRoute * rt = this->tab.upsert( h, sub, len, loc );
+  CaprSubStatus put( uint32_t h,  const char *sub,  size_t len,
+                     bool &collision ) {
+    kv::RouteLoc   loc;
+    uint32_t       hcnt;
+    CaprSubRoute * rt = this->tab.upsert2( h, sub, len, loc, hcnt );
     if ( rt == NULL )
       return CAPR_SUB_NOT_FOUND;
+    collision = ( hcnt > 0 );
     if ( loc.is_new ) {
       rt->msg_cnt = 0;
       return CAPR_SUB_OK;
@@ -82,10 +85,29 @@ struct CaprSubMap {
     rt->msg_cnt++;
     return CAPR_SUB_OK;
   }
-  /* remove tab[ sub ] */
-  CaprSubStatus rem( uint32_t h,  const char *sub,  size_t len ) {
-    if ( ! this->tab.remove( h, sub, len ) )
+  /* find tab[ sub ] */
+  CaprSubStatus find( uint32_t h,  const char *sub,  size_t len,
+                      bool &collision ) {
+    kv::RouteLoc   loc;
+    uint32_t       hcnt;
+    CaprSubRoute * rt = this->tab.find2( h, sub, len, loc, hcnt );
+    if ( rt == NULL ) {
+      collision = ( hcnt > 0 );
       return CAPR_SUB_NOT_FOUND;
+    }
+    collision = ( hcnt > 1 );
+    return CAPR_SUB_OK;
+  }
+  /* remove tab[ sub ] */
+  CaprSubStatus rem( uint32_t h,  const char *sub,  size_t len,
+                     bool &collision ) {
+    kv::RouteLoc   loc;
+    uint32_t       hcnt;
+    CaprSubRoute * rt = this->tab.find2( h, sub, len, loc, hcnt );
+    if ( rt == NULL )
+      return CAPR_SUB_NOT_FOUND;
+    collision = ( hcnt > 1 );
+    this->tab.remove( loc );
     return CAPR_SUB_OK;
   }
   /* iterate first tab[ sub ] */
@@ -98,15 +120,53 @@ struct CaprSubMap {
     pos.rt = this->tab.next( pos.v, pos.off );
     return pos.rt != NULL;
   }
+  bool rem_collision( CaprSubRoute *rt ) {
+    kv::RouteLoc loc;
+    CaprSubRoute * rt2;
+    rt->msg_cnt = ~(uint32_t) 0;
+    if ( (rt2 = this->tab.find_by_hash( rt->hash, loc )) != NULL ) {
+      do {
+        if ( rt2->msg_cnt != ~(uint32_t) 0 )
+          return true;
+      } while ( (rt2 = this->tab.find_next_by_hash( rt->hash, loc )) != NULL );
+    }
+    return false;
+  }
+};
+
+struct CaprWildMatch {
+  CaprWildMatch           * next,
+                          * back;
+  pcre2_real_code_8       * re;
+  pcre2_real_match_data_8 * md;
+  uint32_t                  msg_cnt;
+  uint16_t                  len;
+  char                      value[ 2 ];
+
+  void * operator new( size_t, void *ptr ) { return ptr; }
+  void operator delete( void *ptr ) { ::free( ptr ); }
+
+  CaprWildMatch( uint16_t patlen,  const char *pat,  pcre2_real_code_8 *r,
+               pcre2_real_match_data_8 *m )
+    : next( 0 ), back( 0 ), re( r ), md( m ), msg_cnt( 0 ), len( patlen ) {
+    ::memcpy( this->value, pat, patlen );
+    this->value[ patlen ] = '\0';
+  }
+  static CaprWildMatch *create( uint16_t patlen,  const char *pat,
+                           pcre2_real_code_8 *r, pcre2_real_match_data_8 *m ) {
+    size_t sz = sizeof( CaprWildMatch ) + patlen - 2;
+    void * p  = ::malloc( sz );
+    if ( p == NULL ) return NULL;
+    return new ( p ) CaprWildMatch( patlen, pat, r, m );
+  }
 };
 
 struct CaprPatternRoute {
-  uint32_t                  hash,
-                            msg_cnt;
-  pcre2_real_code_8       * re;
-  pcre2_real_match_data_8 * md;
-  uint16_t                  len;
-  char                      value[ 2 ];
+  uint32_t                     hash,       /* hash of the pattern prefix */
+                               count;
+  kv::DLinkList<CaprWildMatch> list;
+  uint16_t                     len;        /* length of the pattern subject */
+  char                         value[ 2 ]; /* the pattern subject */
 };
 
 struct CaprPatternRoutePos {
@@ -117,32 +177,54 @@ struct CaprPatternRoutePos {
 
 struct CaprPatternMap {
   kv::RouteVec<CaprPatternRoute> tab;
+  size_t sub_count;
 
+  CaprPatternMap() : sub_count( 0 ) {}
   bool is_null( void ) const {
     return this->tab.vec_size == 0;
-  }
-
-  size_t sub_count( void ) const {
-    return this->tab.pop_count();
   }
   void release( void ) noexcept;
   /* put in new sub
    * tab[ sub ] => {cnt} */
   CaprSubStatus put( uint32_t h,  const char *sub,  size_t len,
-                      CaprPatternRoute *&rt ) {
+                   CaprPatternRoute *&rt,  bool &collision ) {
     kv::RouteLoc loc;
-    rt = this->tab.upsert( h, sub, len, loc );
+    uint32_t     hcnt;
+    rt = this->tab.upsert2( h, sub, len, loc, hcnt );
     if ( rt == NULL )
       return CAPR_SUB_NOT_FOUND;
+    collision = ( hcnt > 0 );
     if ( loc.is_new ) {
-      rt->msg_cnt = 0;
-      rt->re = NULL;
-      rt->md = NULL;
+      rt->count = 0;
+      rt->list.init();
       return CAPR_SUB_OK;
     }
     return CAPR_SUB_EXISTS;
   }
 
+  CaprSubStatus find( uint32_t h,  const char *sub,  size_t len,
+                    CaprPatternRoute *&rt ) {
+    rt = this->tab.find( h, sub, len );
+    if ( rt == NULL )
+      return CAPR_SUB_NOT_FOUND;
+    return CAPR_SUB_OK;
+  }
+  CaprSubStatus find( uint32_t h,  const char *sub,  size_t len,
+                    CaprPatternRoute *&rt,  bool &collision ) {
+    kv::RouteLoc loc;
+    return this->find( h, sub, len, loc, rt, collision );
+  }
+  CaprSubStatus find( uint32_t h,  const char *sub,  size_t len,
+                  kv::RouteLoc &loc, CaprPatternRoute *&rt,  bool &collision ) {
+    uint32_t hcnt;
+    rt = this->tab.find2( h, sub, len, loc, hcnt );
+    if ( rt == NULL ) {
+      collision = ( hcnt > 0 );
+      return CAPR_SUB_NOT_FOUND;
+    }
+    collision = ( hcnt > 1 );
+    return CAPR_SUB_OK;
+  }
   /* iterate first tab[ sub ] */
   bool first( CaprPatternRoutePos &pos ) {
     pos.rt = this->tab.first( pos.v, pos.off );
@@ -152,6 +234,21 @@ struct CaprPatternMap {
   bool next( CaprPatternRoutePos &pos ) {
     pos.rt = this->tab.next( pos.v, pos.off );
     return pos.rt != NULL;
+  }
+  bool rem_collision( CaprPatternRoute *rt,  CaprWildMatch *m ) {
+    kv::RouteLoc       loc;
+    CaprPatternRoute * rt2;
+    CaprWildMatch    * m2;
+    m->msg_cnt = ~(uint32_t) 0;
+    if ( (rt2 = this->tab.find_by_hash( rt->hash, loc )) != NULL ) {
+      do {
+        for ( m2 = rt2->list.tl; m2 != NULL; m2 = m2->back ) {
+          if ( m2->msg_cnt != ~(uint32_t) 0 )
+            return true;
+        }
+      } while ( (rt2 = this->tab.find_next_by_hash( rt->hash, loc )) != NULL );
+    }
+    return false;
   }
 };
 
@@ -199,6 +296,8 @@ struct EvCaprService : public kv::EvConnection {
   virtual bool timer_expire( uint64_t tid, uint64_t eid ) noexcept final;
   virtual bool hash_to_sub( uint32_t h, char *k, size_t &klen ) noexcept final;
   virtual bool on_msg( kv::EvPublish &pub ) noexcept final;
+  virtual uint8_t is_subscribed( const kv::NotifySub &sub ) noexcept final;
+  virtual uint8_t is_psubscribed( const kv::NotifyPattern &pat ) noexcept final;
 };
 
 static inline bool is_rng( uint8_t c, uint8_t x, uint8_t y ) {
@@ -308,11 +407,11 @@ struct CaprMsgOut {
   /* publish without publish time / create time */
   uint32_t encode_publish( CaprSession &sess,  const uint8_t *addr,
                            const char *subj,  uint8_t code,
-                           uint32_t msg_len,  uint8_t msg_enc ) noexcept;
+                           uint32_t msg_len,  uint32_t msg_enc ) noexcept;
   /* publish with pub time from link and create time from source */
   uint32_t encode_publish_time( CaprSession &sess,  const uint8_t *addr,
                                 const char *subj,  uint8_t code,
-                                uint32_t msg_len,  uint8_t msg_enc,
+                                uint32_t msg_len,  uint32_t msg_enc,
                                 uint64_t ptim,  uint64_t ctim,
                                 uint32_t *counter ) noexcept;
   /* request with inbox reply */
