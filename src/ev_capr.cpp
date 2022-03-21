@@ -16,7 +16,6 @@
 #include <raikv/key_hash.h>
 #include <raikv/util.h>
 #include <raikv/ev_publish.h>
-#include <raikv/kv_pubsub.h>
 #include <raikv/timer_queue.h>
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -111,26 +110,12 @@ EvCaprListen::EvCaprListen( EvPoll &p ) noexcept
 bool
 EvCaprListen::accept( void ) noexcept
 {
-  struct sockaddr_storage addr;
-  socklen_t addrlen = sizeof( addr );
-  int sock = ::accept( this->fd, (struct sockaddr *) &addr, &addrlen );
-  if ( sock < 0 ) {
-    if ( errno != EINTR ) {
-      if ( errno != EAGAIN )
-        perror( "accept" );
-      this->pop3( EV_READ, EV_READ_LO, EV_READ_HI );
-    }
-    return false;
-  }
   EvCaprService *c = 
     this->poll.get_free_list<EvCaprService>( this->accept_sock_type );
-  if ( c == NULL ) {
-    perror( "accept: no memory" );
-    ::close( sock );
+  if ( c == NULL )
     return false;
-  }
-  EvTcpListen::set_sock_opts( this->poll, sock, this->sock_opts );
-  ::fcntl( sock, F_SETFL, O_NONBLOCK | ::fcntl( sock, F_GETFL ) );
+  if ( ! this->accept2( *c, "capr" ) )
+    return false;
 
   if ( this->sess == NULL ) {
     uint64_t h1;
@@ -140,17 +125,10 @@ EvCaprListen::accept( void ) noexcept
     ::gethostname( host, sizeof( host ) );
     this->sess = CaprSession::create( "localhost", user, host, "ds", h1 );
   }
-  c->PeerData::init_peer( sock, (struct sockaddr *) &addr, "capr" );
   c->initialize_state( ++this->timer_id );
   c->sess = this->sess->copy();
-  c->idle_push( EV_WRITE_HI );
-  if ( this->poll.add_sock( c ) < 0 ) {
-    fprintf( stderr, "failed to add sock %d\n", sock );
-    ::close( sock );
-    this->poll.push_free_list( c );
-    return false;
-  }
   c->pub_session( CAPR_SESSION_START );
+  c->idle_push( EV_WRITE_HI );
   this->poll.timer.add_timer_seconds( c->fd, CAPR_SESSION_IVAL,
                                       c->timer_id, 0 );
   return true;
@@ -365,8 +343,8 @@ EvCaprService::add_sub( CaprMsgIn &rec ) noexcept
 }
 
 void
-EvCaprService::add_subscription( const char *sub,  uint32_t len,
-                                 const char *reply,  uint32_t replylen,
+EvCaprService::add_subscription( const char *sub,  size_t len,
+                                 const char *reply,  size_t replylen,
                                  bool is_wild ) noexcept
 {
     uint32_t h;
@@ -532,7 +510,7 @@ EvCaprService::fwd_pub( CaprMsgIn &rec ) noexcept
            h   = kv_crc_c( sub, len, 0 );
   EvPublish pub( sub, len, NULL, 0, rec.msg_data, rec.msg_data_len,
                  this->sub_route, this->fd, h, rec.msg_enc, rec.code );
-  return this->sub_route.forward_msg( pub, NULL, 0, NULL );
+  return this->sub_route.forward_msg( pub );
 }
 
 bool
@@ -673,7 +651,6 @@ EvCaprService::release( void ) noexcept
   this->sub_tab.release();
   this->pat_tab.release();
   this->EvConnection::release_buffers();
-  this->poll.push_free_list( this );
 }
 
 void

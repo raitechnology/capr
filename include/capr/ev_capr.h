@@ -20,7 +20,7 @@ struct EvCaprListen : public kv::EvTcpListen {
   EvCaprListen( kv::EvPoll &p ) noexcept;
   virtual bool accept( void ) noexcept;
   virtual int listen( const char *ip,  int port,  int opts ) noexcept {
-    return this->kv::EvTcpListen::listen( ip, port, opts, "capr_listen" );
+    return this->kv::EvTcpListen::listen2( ip, port, opts, "capr_listen" );
   }
 };
 
@@ -280,8 +280,8 @@ struct EvCaprService : public kv::EvConnection {
              size_t data_len ) noexcept;
   void reassert_subs( CaprMsgIn &rec ) noexcept;
   void add_sub( CaprMsgIn &rec ) noexcept;
-  void add_subscription( const char *sub,  uint32_t len,  const char *reply,
-                         uint32_t replylen,  bool is_wild ) noexcept;
+  void add_subscription( const char *sub,  size_t len,  const char *reply,
+                         size_t replylen,  bool is_wild ) noexcept;
   void rem_sub( CaprMsgIn &rec ) noexcept;
   void rem_all_sub( void ) noexcept;
   bool fwd_pub( CaprMsgIn &rec ) noexcept;
