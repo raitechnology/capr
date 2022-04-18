@@ -2,9 +2,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#ifndef _MSC_VER
 #include <unistd.h>
 #include <pthread.h>
 #include <signal.h>
+#else
+#include <raikv/win.h>
+#endif
 #include <capr/ev_capr.h>
 #include <raikv/mainloop.h>
 
@@ -18,7 +22,7 @@ struct Args : public MainLoopVars { /* argv[] parsed args */
 };
 
 struct Loop : public MainLoop<Args> {
-  Loop( EvShm &m,  Args &args,  int num,  bool (*ini)( void * ) ) :
+  Loop( EvShm &m,  Args &args,  size_t num,  bool (*ini)( void * ) ) :
     MainLoop<Args>( m, args, num, ini ) {}
 
   EvCaprListen * capr_sv;

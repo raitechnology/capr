@@ -146,13 +146,14 @@ struct CaprWildMatch {
   void * operator new( size_t, void *ptr ) { return ptr; }
   void operator delete( void *ptr ) { ::free( ptr ); }
 
-  CaprWildMatch( uint16_t patlen,  const char *pat,  pcre2_real_code_8 *r,
+  CaprWildMatch( size_t patlen,  const char *pat,  pcre2_real_code_8 *r,
                pcre2_real_match_data_8 *m )
-    : next( 0 ), back( 0 ), re( r ), md( m ), msg_cnt( 0 ), len( patlen ) {
+    : next( 0 ), back( 0 ), re( r ), md( m ), msg_cnt( 0 ),
+      len( (uint16_t) patlen ) {
     ::memcpy( this->value, pat, patlen );
     this->value[ patlen ] = '\0';
   }
-  static CaprWildMatch *create( uint16_t patlen,  const char *pat,
+  static CaprWildMatch *create( size_t patlen,  const char *pat,
                            pcre2_real_code_8 *r, pcre2_real_match_data_8 *m ) {
     size_t sz = sizeof( CaprWildMatch ) + patlen - 2;
     void * p  = ::malloc( sz );
@@ -407,11 +408,12 @@ struct CaprMsgOut {
   /* publish without publish time / create time */
   uint32_t encode_publish( CaprSession &sess,  const uint8_t *addr,
                            const char *subj,  uint8_t code,
-                           uint32_t msg_len,  uint32_t msg_enc ) noexcept;
+                           size_t msg_len,  uint32_t msg_enc ) noexcept;
+#if 0
   /* publish with pub time from link and create time from source */
   uint32_t encode_publish_time( CaprSession &sess,  const uint8_t *addr,
                                 const char *subj,  uint8_t code,
-                                uint32_t msg_len,  uint32_t msg_enc,
+                                size_t msg_len,  uint32_t msg_enc,
                                 uint64_t ptim,  uint64_t ctim,
                                 uint32_t *counter ) noexcept;
   /* request with inbox reply */
@@ -423,7 +425,8 @@ struct CaprMsgOut {
   /* request with inbox reply and message */
   uint32_t encode_request_msg( CaprSession &sess,  uint32_t inbox_id,
                                const char *subj,  uint8_t code,
-                               uint32_t msg_len,  uint8_t msg_enc ) noexcept;
+                               size_t msg_len,  uint8_t msg_enc ) noexcept;
+#endif
 };
 
 enum CaprDecodeStatus {

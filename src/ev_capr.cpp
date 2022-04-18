@@ -2,16 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <ctype.h>
+#ifndef _MSC_VER
 #include <unistd.h>
-#include <fcntl.h>
+#else
+#include <raikv/win.h>
+#endif
 #include <time.h>
-#include <errno.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
-#include <arpa/inet.h>
 #include <capr/ev_capr.h>
 #include <raikv/key_hash.h>
 #include <raikv/util.h>
@@ -275,7 +271,7 @@ EvCaprService::reassert_subs( CaprMsgIn &rec ) noexcept
               if ( mref.ftype == MD_STRING &&
                    mref.fsize > 0 && mref.fsize < CAPR_MAX_SUBJ_LEN ) {
                 const char * sub     = (char *) mref.fptr;
-                uint32_t     len     = mref.fsize;
+                size_t       len     = mref.fsize;
                 bool         is_wild = false;
 
                 while ( len > 0 && sub[ len - 1 ] == '\0' )
@@ -287,12 +283,16 @@ EvCaprService::reassert_subs( CaprMsgIn &rec ) noexcept
                     else if ( sub[ len - 2 ] == '.' )
                       is_wild = true;
                   }
-                  if ( ! is_wild ) {
-                    const char * p = (const char *)
-                                     ::memmem( sub, len, "*.", 2 );
-                    if ( p != NULL ) {
-                      if ( p == sub || p[ -1 ] == '.' )
+                  if ( ! is_wild ) { /* look for *. .*. .* */
+                    const char * p = (const char *) ::memchr( sub, '*', len );
+                    while ( p != NULL ) {
+                      if ( ( p == sub || p[ -1 ] == '.' ) &&
+                           ( p == &sub[ len - 1 ] || p[ 1 ] == '.' ) ) {
                         is_wild = true;
+                        break;
+                      }
+                      p = (const char *)
+                          ::memchr( p+1, '*', &sub[ len ] - (p+1) );
                     }
                   }
                   this->add_subscription( sub, len, NULL, 0, is_wild );
@@ -653,6 +653,16 @@ EvCaprService::release( void ) noexcept
   this->EvConnection::release_buffers();
 }
 
+#ifdef _MSC_VER
+static inline void ca_localtime( time_t t, struct tm &tmbuf ) {
+  ::localtime_s( &tmbuf, &t );
+}
+#else
+static inline void ca_localtime( time_t t, struct tm &tmbuf ) {
+  ::localtime_r( &t, &tmbuf );
+}
+#endif
+
 void
 EvCaprService::pub_session( uint8_t code ) noexcept
 {
@@ -693,7 +703,7 @@ EvCaprService::pub_session( uint8_t code ) noexcept
   uint64_t ns = kv_current_realtime_ns();
   time_t   t  = (time_t) ( ns / (uint64_t) 1e9 );
   struct tm tim;
-  ::localtime_r( &t, &tim );
+  ca_localtime( t, tim );
   ::strftime( date_buf, sizeof( date_buf ), "%Y-%m-%d %H:%M:%S", &tim );
 
   tmw.append_string( date_str, sizeof( date_str ),
@@ -753,7 +763,7 @@ CaprSession::create( const char *addr,  const char *user,  const char *host,
 
   s->sid    = sid;
   s->stime  = kv_current_realtime_ns();
-  s->id_len = len;
+  s->id_len = (uint32_t) len;
 
   return s->copy();
 }
@@ -774,13 +784,13 @@ CaprSession::copy( void ) const noexcept
 
   msg->get_field_iter( fld );
   fld->find( addr_str, sizeof( addr_str ), mref );
-  msg->get_string( mref, s->addr, len ); s->addr_len = len;
+  msg->get_string( mref, s->addr, len ); s->addr_len = (uint8_t) len;
   fld->find( user_str, sizeof( user_str ), mref );
-  msg->get_string( mref, s->user, len ); s->user_len = len;
+  msg->get_string( mref, s->user, len ); s->user_len = (uint8_t) len;
   fld->find( host_str, sizeof( host_str ), mref );
-  msg->get_string( mref, s->host, len ); s->host_len = len;
+  msg->get_string( mref, s->host, len ); s->host_len = (uint8_t) len;
   fld->find( app_str, sizeof( app_str ), mref );
-  msg->get_string( mref, s->app, len );  s->app_len = len;
+  msg->get_string( mref, s->app, len );  s->app_len = (uint8_t) len;
 
   return s;
 }
@@ -907,7 +917,7 @@ CaprMsgIn::get_inbox( char *buf ) noexcept
 uint32_t
 CaprMsgOut::encode_publish( CaprSession &sess,  const uint8_t *addr,
                             const char *subj,  uint8_t code,
-                            uint32_t msg_len,  uint32_t msg_enc ) noexcept
+                            size_t msg_len,  uint32_t msg_enc ) noexcept
 {
   uint32_t off;
 
@@ -926,7 +936,7 @@ CaprMsgOut::encode_publish( CaprSession &sess,  const uint8_t *addr,
   off += CAPR_SID_SIZE;
 
   this->flags    |= CAPR_SID_PRESENT;
-  this->data_len  = msg_len + off;
+  this->data_len  = (uint32_t) ( msg_len + off );
   this->subj_hash = get_u32<MD_BIG>( &this->subj_hash ); /* flip */
   this->data_len  = get_u32<MD_BIG>( &this->data_len );
 
@@ -967,7 +977,7 @@ CaprMsgIn::decode( uint8_t *capr_pkt,  size_t pkt_size ) noexcept
       return ERR_TRUNCATED_SUBJECT;
   }
   this->subj        = capr_pkt;
-  this->subj_len    = off;
+  this->subj_len    = (uint32_t) off;
   this->addr        = NULL; /* optional values, test flags for presence */
   this->sid         = 0;
   this->ptime       = 0;
@@ -1005,6 +1015,6 @@ CaprMsgIn::decode( uint8_t *capr_pkt,  size_t pkt_size ) noexcept
   this->msg_data = &capr_pkt[ off ];
   if ( this->data_len < off )
     return ERR_TRUNCATED_MESSAGE;
-  this->msg_data_len = this->data_len - off;
+  this->msg_data_len = (uint32_t) ( this->data_len - off );
   return DECODE_OK;
 }
