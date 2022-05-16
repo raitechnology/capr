@@ -201,7 +201,7 @@ EvCaprService::timer_expire( uint64_t tid,  uint64_t ) noexcept
   if ( this->timer_id != tid )
     return false;
   this->pub_session( CAPR_SESSION_INFO );
-  this->idle_push( EV_WRITE );
+  this->idle_push_write();
   return true;
 }
 
@@ -584,9 +584,7 @@ EvCaprService::fwd_msg( EvPublish &pub,  const void *,  size_t ) noexcept
   size_t off = rec.encode_publish( *this->sess, 0, pub.subject, pub.pub_type,
                                    pub.msg_len, pub.msg_enc );
   this->send( rec, off, pub.msg, pub.msg_len );
-  bool flow_good = ( this->pending() <= this->send_highwater );
-  this->idle_push( flow_good ? EV_WRITE : EV_WRITE_HI );
-  return flow_good;
+  return this->idle_push_write();
 }
 
 void
@@ -612,9 +610,7 @@ EvCaprService::fwd_inbox( EvPublish &pub ) noexcept
   size_t off = rec.encode_publish( *this->sess, addr, subj, pub.pub_type,
                                    pub.msg_len, pub.msg_enc );
   this->send( rec, off, pub.msg, pub.msg_len );
-  bool flow_good = ( this->pending() <= this->send_highwater );
-  this->idle_push( flow_good ? EV_WRITE : EV_WRITE_HI );
-  return flow_good;
+  return this->idle_push_write();
 }
 
 void
