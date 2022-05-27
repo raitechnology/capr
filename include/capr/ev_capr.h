@@ -18,7 +18,7 @@ struct EvCaprListen : public kv::EvTcpListen {
   CaprSession * sess;
   void * operator new( size_t, void *ptr ) { return ptr; }
   EvCaprListen( kv::EvPoll &p ) noexcept;
-  virtual bool accept( void ) noexcept;
+  virtual EvSocket *accept( void ) noexcept;
   virtual int listen( const char *ip,  int port,  int opts ) noexcept {
     return this->kv::EvTcpListen::listen2( ip, port, opts, "capr_listen" );
   }

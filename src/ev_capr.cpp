@@ -103,15 +103,15 @@ EvCaprListen::EvCaprListen( EvPoll &p ) noexcept
   md_init_auto_unpack();
 }
 
-bool
+EvSocket *
 EvCaprListen::accept( void ) noexcept
 {
   EvCaprService *c = 
     this->poll.get_free_list<EvCaprService>( this->accept_sock_type );
   if ( c == NULL )
-    return false;
+    return NULL;
   if ( ! this->accept2( *c, "capr" ) )
-    return false;
+    return NULL;
 
   if ( this->sess == NULL ) {
     uint64_t h1;
@@ -127,7 +127,7 @@ EvCaprListen::accept( void ) noexcept
   c->idle_push( EV_WRITE_HI );
   this->poll.timer.add_timer_seconds( c->fd, CAPR_SESSION_IVAL,
                                       c->timer_id, 0 );
-  return true;
+  return c;
 }
 
 static void
