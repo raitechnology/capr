@@ -20,7 +20,7 @@ struct EvCaprListen : public kv::EvTcpListen {
   EvCaprListen( kv::EvPoll &p ) noexcept;
   virtual EvSocket *accept( void ) noexcept;
   virtual int listen( const char *ip,  int port,  int opts ) noexcept {
-    return this->kv::EvTcpListen::listen2( ip, port, opts, "capr_listen" );
+    return this->kv::EvTcpListen::listen2( ip, port, opts, "capr_listen", -1 );
   }
 };
 
