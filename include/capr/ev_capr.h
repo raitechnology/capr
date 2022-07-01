@@ -292,13 +292,14 @@ struct EvCaprService : public kv::EvConnection {
                        uint8_t *addr ) noexcept;
   void pub_session( uint8_t code ) noexcept;
   /* EvSocket */
-  virtual void process( void ) noexcept final;
-  virtual void release( void ) noexcept final;
-  virtual bool timer_expire( uint64_t tid, uint64_t eid ) noexcept final;
-  virtual bool hash_to_sub( uint32_t h, char *k, size_t &klen ) noexcept final;
-  virtual bool on_msg( kv::EvPublish &pub ) noexcept final;
-  virtual uint8_t is_subscribed( const kv::NotifySub &sub ) noexcept final;
-  virtual uint8_t is_psubscribed( const kv::NotifyPattern &pat ) noexcept final;
+  virtual void process( void ) noexcept;
+  virtual void process_close( void ) noexcept;
+  virtual void release( void ) noexcept;
+  virtual bool timer_expire( uint64_t tid, uint64_t eid ) noexcept;
+  virtual bool hash_to_sub( uint32_t h, char *k, size_t &klen ) noexcept;
+  virtual bool on_msg( kv::EvPublish &pub ) noexcept;
+  virtual uint8_t is_subscribed( const kv::NotifySub &sub ) noexcept;
+  virtual uint8_t is_psubscribed( const kv::NotifyPattern &pat ) noexcept;
 };
 
 static inline bool is_rng( uint8_t c, uint8_t x, uint8_t y ) {

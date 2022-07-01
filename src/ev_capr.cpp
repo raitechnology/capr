@@ -639,6 +639,13 @@ CaprPatternMap::release( void ) noexcept
 }
 
 void
+EvCaprService::process_close( void ) noexcept
+{
+  this->client_stats( this->sub_route.peer_stats );
+  this->EvSocket::process_close();
+}
+
+void
 EvCaprService::release( void ) noexcept
 {
   if ( this->sess != NULL )
