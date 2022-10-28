@@ -112,7 +112,7 @@ endif
 
 capr_lib    := $(libd)/libcapr.a
 rpath       := -Wl,-rpath,$(pwd)/$(libd)$(rpath1)$(rpath2)$(rpath3)$(rpath4)$(rpath5)$(rpath6)$(rpath7)
-dlnk_lib    += -lpcre2-8
+dlnk_lib    += -lpcre2-8 -lcares
 malloc_lib  :=
 
 .PHONY: everything
@@ -186,7 +186,7 @@ capr_server_cfile := $(addprefix src/, $(addsuffix .cpp, $(capr_server_files)))
 capr_server_objs  := $(addprefix $(objd)/, $(addsuffix .o, $(capr_server_files)))
 capr_server_deps  := $(addprefix $(dependd)/, $(addsuffix .d, $(capr_server_files)))
 capr_server_libs  := $(capr_lib)
-capr_server_lnk   := $(capr_lib) $(lnk_lib) -lpcre2-8
+capr_server_lnk   := $(capr_lib) $(lnk_lib) -lpcre2-8 -lcares
 
 $(bind)/capr_server: $(capr_server_objs) $(capr_server_libs) $(lnk_dep)
 
@@ -270,9 +270,9 @@ CMakeLists.txt: .copr/Makefile
 	  link_libraries (capr raikv raimd decnumber pcre2-8-static ws2_32)
 	else ()
 	  if (TARGET pcre2-8-static)
-	    link_libraries (capr raikv raimd decnumber pcre2-8-static -lpthread -lrt)
+	    link_libraries (capr raikv raimd decnumber pcre2-8-static -lcares -lpthread -lrt)
 	  else ()
-	    link_libraries (capr raikv raimd decnumber -lpcre2-8 -lpthread -lrt)
+	    link_libraries (capr raikv raimd decnumber -lpcre2-8 -lcares -lpthread -lrt)
 	  endif ()
 	endif ()
 	add_definitions(-DCAPR_VER=$(ver_build))
